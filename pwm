@@ -1,0 +1,112 @@
+#!/bin/sh
+fatal() {
+    echo "$*" >&2
+    exit 1
+}
+
+if [ -f ~/.pwmrc ]; then
+    [ $(stat -c'%a' ~/.pwmrc) != 600 ] && fatal "Access mode on ~/.pwmrc is too permissive: please set to 600."
+    . ~/.pwmrc
+fi
+[ -n "$cipher" ] || cipher=-aes256
+[ -n "$dbfile" ] || dbfile=~/.pwmdb
+[ -n "$default_pwlen" ] || default_pwlen=30
+[ -n "$EDITOR" ] || EDITOR=vi
+umask 177
+
+type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password Manager."
+
+set -e
+
+encrypt() {
+    ( echo "$masterpw"; cat ) | openssl enc "$cipher" -salt -pass stdin >"$dbfile"
+}
+
+decrypt() {
+    if [ -f "$dbfile" ]; then
+        ( echo "$masterpw"; cat "$dbfile" ) | openssl enc "$cipher" -d -pass stdin
+    else
+        echo -n ""
+    fi
+}
+
+backup_db() {
+    cp "$dbfile" "${dbfile}~"
+}
+
+read_masterpw() {
+    stty -echo
+    read -p "master password: " masterpw; echo
+    stty echo
+}
+
+create_tempfile() {
+    tempfile -p .pwm -d "$HOME"
+}
+
+read_key() {
+    read -p "$*: " key
+}
+
+lookup() {
+    decrypt | grep "${key}[^:]*:"
+}
+
+add_password() {
+    backup_db
+    tmp=$(create_tempfile)
+    trap "rm -f -- '$tmp'" EXIT
+    ( decrypt; echo "$key:$pw" ) | ( ( dbfile="$tmp" encrypt ) && mv "$tmp" "$dbfile" )
+    echo "password stored"
+}
+
+echo "Password Manager"
+echo "l) Lookup password"
+type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip command)"
+echo "a) Add password"
+echo "g) Generate password"
+echo "e) Edit password database ($dbfile)"
+#echo "m) Change master password"
+echo "q) Quit"
+while true; do
+    read -p "> " action
+    case "$action" in
+        l)
+            read_key "lookup key"
+            read_masterpw
+            lookup
+            ;;
+        x)
+            read_key "key to copy"
+            read_masterpw
+            lookup | head -n1 | cut -d: -f2 | tr -d '\n' | xclip -in -verbose -selection clipboard
+            ;;
+        a)
+            read_key "key to add"
+            stty -echo
+            read -p "password to store: " pw; echo
+            stty echo
+            read_masterpw
+            add_password
+            ;;
+        g)
+            read_key "key to add"
+            read -p "password length ($default_pwlen): " pwlen
+            [ "$pwlen" = "$(echo)" ] && pwlen="$default_pwlen"
+            pw=$(openssl rand -base64 "$pwlen" | tr -d '\n=' | cut -b-"$pwlen")
+            read_masterpw
+            add_password
+            ;;
+        e)
+            read_masterpw
+            backup_db
+            tmp=$(create_tempfile)
+            trap "rm -f -- '$tmp'" EXIT
+            decrypt >"$tmp" && "$EDITOR" "$tmp" && ( cat "$tmp" | encrypt )
+            echo "password database updated"
+            ;;
+        q) echo "Bye!";;
+        *) continue;;
+    esac
+    exit 0
+done
