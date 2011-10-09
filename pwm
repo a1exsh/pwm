@@ -23,6 +23,10 @@ type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password
 
 set -e
 
+backup_db() {
+    cp "$dbfile" "${dbfile}~"
+}
+
 encrypt() {
     ( echo "$masterpw"; cat ) | openssl enc "$cipher" -salt -pass stdin >"$dbfile"
 }
@@ -35,13 +39,11 @@ decrypt() {
     fi
 }
 
-backup_db() {
-    cp "$dbfile" "${dbfile}~"
-}
-
 read_masterpw() {
     stty -echo
-    read -p "master password: " masterpw; echo
+    prompt="$1"
+    [ -n "$prompt" ] || prompt="master password"
+    read -p "${prompt}: "  masterpw; echo
     stty echo
 }
 
@@ -54,14 +56,17 @@ read_key() {
 }
 
 lookup() {
-    decrypt | grep "${key}[^:]*:"
+    db=$(decrypt)
+    echo "$db" | grep "${key}[^:]*:"
 }
 
 add_password() {
-    backup_db
+    db=$(decrypt)
     tmp=$(create_tempfile)
     trap "rm -f -- '$tmp'" EXIT
-    ( decrypt; echo "$key:$pw" ) | ( ( dbfile="$tmp" encrypt ) && mv "$tmp" "$dbfile" )
+    ( echo "$db"; echo "${key}:${pw}" ) | dbfile="$tmp" encrypt
+    backup_db
+    mv "$tmp" "$dbfile"
     echo "password stored"
 }
 
@@ -71,7 +76,7 @@ type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip
 echo "a) Add password"
 echo "g) Generate password"
 echo "e) Edit password database ($dbfile)"
-#echo "m) Change master password"
+echo "m) Change master password"
 echo "q) Quit"
 while true; do
     read -p "> " action
@@ -104,11 +109,25 @@ while true; do
             ;;
         e)
             read_masterpw
-            backup_db
             tmp=$(create_tempfile)
             trap "rm -f -- '$tmp'" EXIT
-            decrypt >"$tmp" && "$EDITOR" "$tmp" && ( cat "$tmp" | encrypt )
+            decrypt >"$tmp"
+            "$EDITOR" "$tmp"
+            backup_db
+            encrypt <"$tmp"
             echo "password database updated"
+            ;;
+        m)
+            read_masterpw
+            old_masterpw="$masterpw"
+            read_masterpw "new master password"
+            new_masterpw="$masterpw"
+            read_masterpw "confirm new master password"
+            [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match new master password: operation aborted."
+            db=$(masterpw="$old_masterpw" decrypt)
+            backup_db
+            echo "$db" | encrypt
+            echo "master password updated"
             ;;
         q) echo "Bye!";;
         *) continue;;
