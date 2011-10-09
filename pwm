@@ -4,15 +4,20 @@ fatal() {
     exit 1
 }
 
-if [ -f ~/.pwmrc ]; then
-    [ $(stat -c'%a' ~/.pwmrc) != 600 ] && fatal "Access mode on ~/.pwmrc is too permissive: please set to 600."
-    . ~/.pwmrc
+rcfile=~/.pwmrc
+if [ -f "$rcfile" ]; then
+    [ $(stat -c'%a' "$rcfile") = 600 ] || fatal "Access mode on \`$rcfile' is too permissive: please set to 600."
+    . "$rcfile"
 fi
 [ -n "$cipher" ] || cipher=-aes256
 [ -n "$dbfile" ] || dbfile=~/.pwmdb
 [ -n "$default_pwlen" ] || default_pwlen=30
 [ -n "$EDITOR" ] || EDITOR=vi
 umask 177
+
+if [ -f "$dbfile" ]; then
+    [ $(stat -c'%a' "$dbfile") = 600 ] || fatal "Access mode on password database \`$dbfile' is too permissive: please set to 600."
+fi
 
 type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password Manager."
 
