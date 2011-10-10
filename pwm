@@ -79,15 +79,14 @@ read_key() {
 }
 
 lookup() {
-    decrypt | grep "${key}[^:]*:"
+    decrypt | grep "${key}"
 }
 
 store_password() {
     if [ -z "$tmp" ]; then
         with_tempfile store_password
     else
-        decrypt | grep -v "^${key}:" >"$tmp"
-        echo "${key}:${pw}" >>"$tmp"
+        decrypt | ( grep -v "^${key}:" || true; echo "${key}:${pw}" ) >"$tmp"
         encrypt <"$tmp"
         echo "password stored"
     fi
@@ -114,14 +113,27 @@ change_masterpw() {
     fi
 }
 
+have_xclip() {
+    type xclip 2>/dev/null >&2
+}
+
+soak_xclip() {
+    # WTF: why the magic 5 selection requests?
+    xclip -in -selection clipboard -l 5
+}
+
 echo "Password Manager v0.1"
 [ -f "$dbfile" ] && echo "Database file is: $dbfile"
 echo
 print_help() {
     echo "l) Lookup password"
-    type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip command)"
+    have_xclip && echo "x) Copy password to X clipboard (using xclip command)"
     echo "s) Store password"
-    echo "g) Generate (and store) password"
+    if have_xclip; then
+        echo "g[sx]) Generate password (also store and/or copy to X clipboard)"
+    else
+        echo "g[s]) Generate password (also store in the database)"
+    fi
     echo "e) Edit password database"
     echo "m) Change master password"
     echo "k) Lock database"
@@ -139,7 +151,7 @@ while true; do
             fi
             read_key "lookup key"
             [ -z "$masterpw" ] && read_masterpw
-            lookup
+            key="${key}[^:]*:" lookup || echo "not found"
             ;;
         x)
             if [ ! -f "$dbfile" ]; then
@@ -148,25 +160,40 @@ while true; do
             fi
             read_key "key to copy"
             [ -z "$masterpw" ] && read_masterpw
-            lookup | head -n1 | cut -d: -f2 | tr -d '\n' | xclip -in -verbose -selection clipboard
+            pw=$(key="^${key}:" lookup || true)
+            if [ -z "$pw" ]; then
+                echo "not found"
+            else
+                echo "$pw" | cut -d: -f2 | tr -d '\n' | soak_xclip
+                echo "soaked for one-time paste from X clipboard"
+            fi
             ;;
         s)
             [ -f "$dbfile" ] || create_db
-            read_key "key to add"
+            read_key "key to store"
             stty -echo
             read -p "password to store: " pw; echo
             stty echo
             [ -z "$masterpw" ] && read_masterpw
             store_password
             ;;
-        g)
-            [ -f "$dbfile" ] || create_db
-            read_key "key to add"
+        g|gs|gx|gsx)
             read -p "password length ($default_pwlen): " pwlen
             [ "$pwlen" = "$(echo)" ] && pwlen="$default_pwlen"
             pw=$(openssl rand -base64 "$pwlen" | tr -d '\n=' | cut -b-"$pwlen")
-            [ -z "$masterpw" ] && read_masterpw
-            store_password
+            if [ "$action" = g ]; then
+                echo "$pw"
+            else
+                if [ "$action" = gs -o "$action" = gsx ]; then
+                    [ -f "$dbfile" ] || create_db
+                    read_key "key to store"
+                    [ -z "$masterpw" ] && read_masterpw
+                    store_password
+                fi
+                if [ "$action" = gx -o "$action" = gsx ]; then
+                    echo -n "$pw" | soak_xclip
+                fi
+            fi
             ;;
         e)
             if [ -f "$dbfile" ]; then
@@ -201,5 +228,5 @@ while true; do
         *) echo "unknown action: 'h' for help";;
     esac
 done
-trap "" EXIT
+trap - EXIT
 exit 0
