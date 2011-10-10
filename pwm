@@ -165,7 +165,7 @@ while true; do
                 echo "not found"
             else
                 echo "$pw" | cut -d: -f2 | tr -d '\n' | soak_xclip
-                echo "soaked for one-time paste from X clipboard"
+                echo "soaked password for one-time paste from X clipboard"
             fi
             ;;
         s)
