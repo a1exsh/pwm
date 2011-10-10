@@ -23,7 +23,7 @@ type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password
 
 set -e
 at_exit="echo 'Operation failed!' >&2"
-trap "$at_exit"  EXIT
+trap "$at_exit" EXIT
 
 backup_db() {
     if [ -f "$dbfile" ]; then
@@ -32,6 +32,7 @@ backup_db() {
 }
 
 encrypt() {
+    backup_db
     ( echo "$masterpw"; cat ) | openssl enc "$cipher" -salt -pass stdin >"$dbfile"
 }
 
@@ -60,8 +61,17 @@ create_db() {
     [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match master password: operation aborted."
 }
 
-create_tempfile() {
-    tempfile -p .pwm -d "$HOME"
+with_tempfile() {
+    tmp=$(tempfile -p .pwm -d "$HOME")
+    old_at_exit="$at_exit"
+    rm_tempfile_cmd="rm -f -- '$tmp'"
+    at_exit="$rm_tempfile_cmd; $old_at_exit"
+    trap "$at_exit" EXIT
+    eval $*
+    eval $rm_tempfile_cmd
+    at_exit="$old_at_exit"
+    trap "$at_exit" EXIT
+    tmp=''
 }
 
 read_key() {
@@ -69,35 +79,39 @@ read_key() {
 }
 
 lookup() {
-    db=$(decrypt)
-    echo "$db" | grep "${key}[^:]*:"
+    decrypt | grep "${key}[^:]*:"
 }
 
 store_password() {
-    db=$(decrypt)
-    tmp=$(create_tempfile)
-    old_at_exit="$at_exit"
-    at_exit="rm -f -- '$tmp'; $at_exit"
-    trap "$at_exit" EXIT
-    ( echo "$db" | grep -v "^${key}:"; echo "${key}:${pw}" ) | dbfile="$tmp" encrypt
-    backup_db
-    mv "$tmp" "$dbfile"
-    trap "$old_at_exit" EXIT
-    echo "password stored"
+    if [ -z "$tmp" ]; then
+        with_tempfile store_password
+    else
+        decrypt | grep -v "^${key}:" >"$tmp"
+        echo "${key}:${pw}" >>"$tmp"
+        encrypt <"$tmp"
+        echo "password stored"
+    fi
 }
 
 edit_db() {
-    tmp=$(create_tempfile)
-    old_at_exit="$at_exit"
-    at_exit="rm -f -- '$tmp'; $at_exit"
-    trap "$at_exit" EXIT
-    decrypt >"$tmp"
-    "$EDITOR" "$tmp"
-    backup_db
-    encrypt <"$tmp"
-    rm -f -- "$tmp"
-    trap "$old_at_exit" EXIT
-    echo "password database updated"
+    if [ -z "$tmp" ]; then
+        with_tempfile edit_db
+    else
+        decrypt >"$tmp"
+        "$EDITOR" "$tmp"
+        encrypt <"$tmp"
+        echo "password database updated"
+    fi
+}
+
+change_masterpw() {
+    if [ -z "$tmp" ]; then
+        with_tempfile change_masterpw
+    else
+        masterpw="$old_masterpw" decrypt >"$tmp"
+        masterpw="$new_masterpw" encrypt <"$tmp"
+        echo "master password updated"
+    fi
 }
 
 echo "Password Manager v0.1"
@@ -172,10 +186,7 @@ while true; do
             new_masterpw="$masterpw"
             read_masterpw "confirm new master password"
             [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match new master password: operation aborted."
-            db=$(masterpw="$old_masterpw" decrypt)
-            backup_db
-            echo "$db" | encrypt
-            echo "master password updated"
+            change_masterpw
             ;;
         h) print_help;;
         q)
