@@ -22,9 +22,13 @@ fi
 type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password Manager."
 
 set -e
+at_exit="echo 'Operation failed!' >&2"
+trap "$at_exit"  EXIT
 
 backup_db() {
-    cp "$dbfile" "${dbfile}~"
+    if [ -f "$dbfile" ]; then
+        cp "$dbfile" "${dbfile}~"
+    fi
 }
 
 encrypt() {
@@ -47,6 +51,15 @@ read_masterpw() {
     stty echo
 }
 
+# only prompts for master password and confirmation actually
+create_db() {
+    echo "About to create new password database: \`$dbfile'..."
+    read_masterpw "choose master password"
+    new_masterpw="$masterpw"
+    read_masterpw "confirm master password"
+    [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match master password: operation aborted."
+}
+
 create_tempfile() {
     tempfile -p .pwm -d "$HOME"
 }
@@ -60,21 +73,39 @@ lookup() {
     echo "$db" | grep "${key}[^:]*:"
 }
 
-add_password() {
+store_password() {
     db=$(decrypt)
     tmp=$(create_tempfile)
-    trap "rm -f -- '$tmp'" EXIT
-    ( echo "$db"; echo "${key}:${pw}" ) | dbfile="$tmp" encrypt
+    old_at_exit="$at_exit"
+    at_exit="rm -f -- '$tmp'; $at_exit"
+    trap "$at_exit" EXIT
+    ( echo "$db" | grep -v '^${key}:'; echo "${key}:${pw}" ) | dbfile="$tmp" encrypt
     backup_db
     mv "$tmp" "$dbfile"
+    trap "$old_at_exit" EXIT
     echo "password stored"
 }
 
-echo "Password Manager"
+edit_db() {
+    tmp=$(create_tempfile)
+    old_at_exit="$at_exit"
+    at_exit="rm -f -- '$tmp'; $at_exit"
+    trap "$at_exit" EXIT
+    decrypt >"$tmp"
+    "$EDITOR" "$tmp"
+    backup_db
+    encrypt <"$tmp"
+    rm -f -- "$tmp"
+    trap "$old_at_exit" EXIT
+    echo "password database updated"
+}
+
+echo "Password Manager v0.1"
+[ -f "$dbfile" ] && echo "Database file is: $dbfile"
 echo "l) Lookup password"
 type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip command)"
-echo "a) Add password"
-echo "g) Generate password"
+echo "s) Store password"
+echo "g) Generate (and store) password"
 echo "e) Edit password database ($dbfile)"
 echo "m) Change master password"
 echo "q) Quit"
@@ -82,43 +113,55 @@ while true; do
     read -p "> " action
     case "$action" in
         l)
+            if [ ! -f "$dbfile" ]; then
+                echo "Password database doesn't exist yet: \`$dbfile'"
+                continue
+            fi
             read_key "lookup key"
-            read_masterpw
+            [ -z "$masterpw" ] && read_masterpw
             lookup
             ;;
         x)
+            if [ ! -f "$dbfile" ]; then
+                echo "Password database doesn't exist yet: \`$dbfile'"
+                continue
+            fi
             read_key "key to copy"
-            read_masterpw
+            [ -z "$masterpw" ] && read_masterpw
             lookup | head -n1 | cut -d: -f2 | tr -d '\n' | xclip -in -verbose -selection clipboard
             ;;
-        a)
+        s)
+            [ -f "$dbfile" ] || create_db
             read_key "key to add"
             stty -echo
             read -p "password to store: " pw; echo
             stty echo
-            read_masterpw
-            add_password
+            [ -z "$masterpw" ] && read_masterpw
+            store_password
             ;;
         g)
+            [ -f "$dbfile" ] || create_db
             read_key "key to add"
             read -p "password length ($default_pwlen): " pwlen
             [ "$pwlen" = "$(echo)" ] && pwlen="$default_pwlen"
             pw=$(openssl rand -base64 "$pwlen" | tr -d '\n=' | cut -b-"$pwlen")
-            read_masterpw
-            add_password
+            [ -z "$masterpw" ] && read_masterpw
+            store_password
             ;;
         e)
-            read_masterpw
-            tmp=$(create_tempfile)
-            trap "rm -f -- '$tmp'" EXIT
-            decrypt >"$tmp"
-            "$EDITOR" "$tmp"
-            backup_db
-            encrypt <"$tmp"
-            echo "password database updated"
+            if [ -f "$dbfile" ]; then
+                [ -z "$masterpw" ] && read_masterpw
+            else
+                create_db
+            fi
+            edit_db
             ;;
         m)
-            read_masterpw
+            if [ ! -f "$dbfile" ]; then
+                echo "Password database doesn't exist yet: \`$dbfile'"
+                continue
+            fi
+            read_masterpw "old master password"
             old_masterpw="$masterpw"
             read_masterpw "new master password"
             new_masterpw="$masterpw"
@@ -129,8 +172,12 @@ while true; do
             echo "$db" | encrypt
             echo "master password updated"
             ;;
-        q) echo "Bye!";;
+        q)
+            echo "Bye!"
+            break
+            ;;
         *) continue;;
     esac
-    exit 0
 done
+trap "" EXIT
+exit 0
