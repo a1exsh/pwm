@@ -102,13 +102,18 @@ edit_db() {
 
 echo "Password Manager v0.1"
 [ -f "$dbfile" ] && echo "Database file is: $dbfile"
-echo "l) Lookup password"
-type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip command)"
-echo "s) Store password"
-echo "g) Generate (and store) password"
-echo "e) Edit password database ($dbfile)"
-echo "m) Change master password"
-echo "q) Quit"
+echo
+print_help() {
+    echo "l) Lookup password"
+    type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip command)"
+    echo "s) Store password"
+    echo "g) Generate (and store) password"
+    echo "e) Edit password database ($dbfile)"
+    echo "m) Change master password"
+    echo "h) Print this help message"
+    echo "q) Quit"
+}
+print_help
 while true; do
     read -p "> " action
     case "$action" in
@@ -172,11 +177,15 @@ while true; do
             echo "$db" | encrypt
             echo "master password updated"
             ;;
+        h) print_help;;
         q)
             echo "Bye!"
             break
             ;;
-        *) continue;;
+        *)
+            echo "unknown action: 'h' for help"
+            continue
+            ;;
     esac
 done
 trap "" EXIT
