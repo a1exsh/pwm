@@ -79,7 +79,7 @@ store_password() {
     old_at_exit="$at_exit"
     at_exit="rm -f -- '$tmp'; $at_exit"
     trap "$at_exit" EXIT
-    ( echo "$db" | grep -v '^${key}:'; echo "${key}:${pw}" ) | dbfile="$tmp" encrypt
+    ( echo "$db" | grep -v "^${key}:"; echo "${key}:${pw}" ) | dbfile="$tmp" encrypt
     backup_db
     mv "$tmp" "$dbfile"
     trap "$old_at_exit" EXIT
