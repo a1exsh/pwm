@@ -124,6 +124,7 @@ print_help() {
     echo "g) Generate (and store) password"
     echo "e) Edit password database"
     echo "m) Change master password"
+    echo "k) Lock database"
     echo "h) Print this help message"
     echo "q) Quit"
 }
@@ -188,15 +189,16 @@ while true; do
             [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match new master password: operation aborted."
             change_masterpw
             ;;
+        k)
+            masterpw=''
+            echo "forgot master password"
+            ;;
         h) print_help;;
         q)
             echo "Bye!"
             break
             ;;
-        *)
-            echo "unknown action: 'h' for help"
-            continue
-            ;;
+        *) echo "unknown action: 'h' for help";;
     esac
 done
 trap "" EXIT
