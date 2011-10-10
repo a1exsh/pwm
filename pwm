@@ -122,7 +122,7 @@ print_help() {
     type xclip 2>/dev/null >&2 && echo "x) Copy password to X clipboard (using xclip command)"
     echo "s) Store password"
     echo "g) Generate (and store) password"
-    echo "e) Edit password database ($dbfile)"
+    echo "e) Edit password database"
     echo "m) Change master password"
     echo "h) Print this help message"
     echo "q) Quit"
