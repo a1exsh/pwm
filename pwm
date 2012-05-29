@@ -13,7 +13,16 @@ fi
 [ -n "$dbfile" ] || dbfile=~/.pwmdb
 [ -n "$default_pwlen" ] || default_pwlen=30
 [ -n "$EDITOR" ] || EDITOR=vi
+
+# this has to be set before we create the history file
 umask 177
+
+if [ "$SHELL" = "$BASH" ]; then
+    readline_flags="-e"
+    [ -n "$history_file" ] || history_file=~/.pwm_history
+    [ -f "$history_file" ] || touch "$history_file"
+    history -r "$history_file"
+fi
 
 if [ -f "$dbfile" ]; then
     [ $(stat -c'%a' "$dbfile") = 600 ] || fatal "Access mode on password database \`$dbfile' is too permissive: please set to 600."
@@ -75,7 +84,9 @@ with_tempfile() {
 }
 
 read_key() {
-    read -p "$*: " key
+    read $readline_flags -p "$*: " key
+    [ -n "$history_file" ] && history -s "$key"
+    true
 }
 
 lookup() {
@@ -124,6 +135,7 @@ soak_xclip() {
 
 echo "Password Manager v0.1"
 [ -f "$dbfile" ] && echo "Database file is: $dbfile"
+[ -f "$history_file" ] && echo "Key history file is: $history_file"
 echo
 print_help() {
     echo "l) Lookup password"
@@ -229,4 +241,6 @@ while true; do
     esac
 done
 trap - EXIT
+
+[ -n "$history_file" ] && history -w "$history_file"
 exit 0
