@@ -130,7 +130,7 @@ have_xclip() {
 
 soak_xclip() {
     # WTF: why the magic 5 selection requests?
-    xclip -in -selection clipboard -l 5
+    xclip -in -selection clipboard -l 7 #5
 }
 
 echo "Password Manager v0.1"
@@ -177,7 +177,7 @@ while true; do
                 echo "not found"
             else
                 echo "$pw" | cut -d: -f2 | tr -d '\n' | soak_xclip
-                echo "soaked for one-time paste from X clipboard"
+                echo "soaked password for one-time paste from X clipboard"
             fi
             ;;
         s)
