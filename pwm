@@ -85,7 +85,7 @@ with_tempfile() {
 
 read_key() {
     read $readline_flags -p "$*: " key
-    [ -n "$history_file" ] && history -s "$key"
+    [ -n "$history_file" ] && history -s "$key" && history -w "$history_file"
     true
 }
 
@@ -242,5 +242,4 @@ while true; do
 done
 trap - EXIT
 
-[ -n "$history_file" ] && history -w "$history_file"
 exit 0
