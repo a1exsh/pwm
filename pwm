@@ -54,6 +54,7 @@ decrypt() {
 }
 
 read_masterpw() {
+    [ -z "$masterpw" ] || return 0
     stty -echo
     prompt="$1"
     [ -n "$prompt" ] || prompt="master password"
@@ -64,10 +65,18 @@ read_masterpw() {
 # only prompts for master password and confirmation actually
 create_db() {
     echo "About to create new password database: \`$dbfile'..."
+    # force read
+    unset masterpw
     read_masterpw "choose master password"
     new_masterpw="$masterpw"
+
+    unset masterpw
     read_masterpw "confirm master password"
-    [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match master password: operation aborted."
+    if [ "$new_masterpw" != "$masterpw" ]; then
+        echo "Confirmation doesn't match master password: operation aborted." >&2
+        unset masterpw
+        false
+    fi
 }
 
 with_tempfile() {
@@ -90,16 +99,19 @@ read_key() {
 }
 
 lookup() {
-    decrypt | grep "${key}"
+    ( decrypt | grep "${key}" ) || unset masterpw
 }
 
 store_password() {
     if [ -z "$tmp" ]; then
         with_tempfile store_password
     else
-        decrypt | ( grep -v "^${key}:" || true; echo "${key}:${pw}" ) >"$tmp"
-        encrypt <"$tmp"
-        echo "password stored"
+        if decrypt >"$tmp"; then
+            ( <"$tmp" grep -v "^${key}:" || true; echo "${key}:${pw}" ) | encrypt
+            echo "password stored"
+        else
+            unset masterpw
+        fi
     fi
 }
 
@@ -107,10 +119,14 @@ edit_db() {
     if [ -z "$tmp" ]; then
         with_tempfile edit_db
     else
-        decrypt >"$tmp"
-        "$EDITOR" "$tmp"
-        encrypt <"$tmp"
-        echo "password database updated"
+        if decrypt >"$tmp"; then
+            "$EDITOR" "$tmp"
+            # TODO: check if file was modified actually. mtime?
+            encrypt <"$tmp"
+            echo "password database updated"
+        else
+            unset masterpw
+        fi
     fi
 }
 
@@ -118,9 +134,10 @@ change_masterpw() {
     if [ -z "$tmp" ]; then
         with_tempfile change_masterpw
     else
-        masterpw="$old_masterpw" decrypt >"$tmp"
-        masterpw="$new_masterpw" encrypt <"$tmp"
-        echo "master password updated"
+        if masterpw="$old_masterpw" decrypt >"$tmp"; then
+            masterpw="$new_masterpw" encrypt <"$tmp"
+            echo "master password updated"
+        fi
     fi
 }
 
@@ -162,7 +179,7 @@ while true; do
                 continue
             fi
             read_key "lookup key"
-            [ -z "$masterpw" ] && read_masterpw
+            read_masterpw
             key="${key}[^:]*:" lookup || echo "not found"
             ;;
         x)
@@ -171,22 +188,23 @@ while true; do
                 continue
             fi
             read_key "key to copy"
-            [ -z "$masterpw" ] && read_masterpw
+            read_masterpw
             pw=$(key="^${key}:" lookup || true)
             if [ -z "$pw" ]; then
                 echo "not found"
+                unset masterpw
             else
                 echo "$pw" | cut -d: -f2 | tr -d '\n' | soak_xclip
                 echo "soaked password for one-time paste from X clipboard"
             fi
             ;;
         s)
-            [ -f "$dbfile" ] || create_db
+            [ -f "$dbfile" ] || create_db || continue
             read_key "key to store"
             stty -echo
             read -p "password to store: " pw; echo
             stty echo
-            [ -z "$masterpw" ] && read_masterpw
+            read_masterpw
             store_password
             ;;
         g|gs|gx|gsx)
@@ -197,9 +215,9 @@ while true; do
                 echo "$pw"
             else
                 if [ "$action" = gs -o "$action" = gsx ]; then
-                    [ -f "$dbfile" ] || create_db
+                    [ -f "$dbfile" ] || create_db || continue
                     read_key "key to store"
-                    [ -z "$masterpw" ] && read_masterpw
+                    read_masterpw
                     store_password
                 fi
                 if [ "$action" = gx -o "$action" = gsx ]; then
@@ -209,9 +227,9 @@ while true; do
             ;;
         e)
             if [ -f "$dbfile" ]; then
-                [ -z "$masterpw" ] && read_masterpw
+                read_masterpw
             else
-                create_db
+                create_db || continue
             fi
             edit_db
             ;;
@@ -220,16 +238,27 @@ while true; do
                 echo "Password database doesn't exist yet: \`$dbfile'"
                 continue
             fi
+
+            # force read
+            unset masterpw
             read_masterpw "old master password"
             old_masterpw="$masterpw"
+
+            unset masterpw
             read_masterpw "new master password"
             new_masterpw="$masterpw"
+
+            unset masterpw
             read_masterpw "confirm new master password"
-            [ "$new_masterpw" = "$masterpw" ] || fatal "Confirmation doesn't match new master password: operation aborted."
-            change_masterpw
+            if [ "$new_masterpw" != "$masterpw" ]; then
+                echo "Confirmation doesn't match new master password: operation aborted." >&2
+                unset masterpw
+            else
+                change_masterpw
+            fi
             ;;
         k)
-            masterpw=''
+            unset masterpw
             echo "forgot master password"
             ;;
         h) print_help;;
