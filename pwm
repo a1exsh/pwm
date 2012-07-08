@@ -4,10 +4,10 @@ fatal() {
     exit 1
 }
 
-rcfile=~/.pwmrc
-if [ -f "$rcfile" ]; then
-    [ $(stat -c'%a' "$rcfile") = 600 ] || fatal "Access mode on \`$rcfile' is too permissive: please set to 600."
-    . "$rcfile"
+[ -n "$PWMRC" ] || PWMRC=~/.pwmrc
+if [ -f "$PWMRC" ]; then
+    [ $(stat -c'%a' "$PWMRC") = 600 ] || fatal "Access mode on \`$PWMRC' is too permissive: please set to 600."
+    . "$PWMRC"
 fi
 [ -n "$cipher" ] || cipher=-aes256
 [ -n "$dbfile" ] || dbfile=~/.pwmdb
