@@ -61,12 +61,12 @@ backup_key() {
 }
 
 encrypt() {
-    openssl enc "$cipher" -salt -a -pass env:masterpw >"${dbdir}/${key}"
+    openssl enc "$cipher" -salt -a -pass env:masterpw >"${dbdir}/${key}" 2> /dev/null
 }
 
 decrypt() {
     if [ -f "${dbdir}/${key}" ]; then
-        < "${dbdir}/${key}" openssl enc "$cipher" -d -a -pass env:masterpw
+        < "${dbdir}/${key}" openssl enc "$cipher" -d -a -pass env:masterpw 2> /dev/null
     else
         echo -n ""
     fi
@@ -123,17 +123,23 @@ read_key() {
 }
 
 lookup() {
-    set -o pipefail
-    if ! { decrypt | less ; } then
+    if decrypted=$(decrypt) ; then
+        echo "$decrypted" | less
+        unset decrypted
+    else
         unset masterpw
         echo 'decryption failed'
     fi
-    set +o pipefail
 }
 
 store_password() {
     backup_key
-    echo -n "$pw" | encrypt || unset masterpw
+    if { echo -n "$pw" | encrypt ; } then
+        echo "stored"
+    else
+        unset masterpw
+        echo "storage failed"
+    fi
 }
 
 edit_key() {
