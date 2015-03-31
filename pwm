@@ -26,6 +26,7 @@ fi
 
 if [ -d "$dbdir" ]; then
     [ $(stat -c'%a' "$dbdir") = 700 ] || fatal "Access mode on password database \`$dbdir' is too permissive: please set to 700."
+    cd "$dbdir"
 fi
 
 type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password Manager."
@@ -86,6 +87,7 @@ create_db() {
     if [ ! -d "$dbdir" ] ; then
         echo "About to create new password database: \`$dbdir'..."
         mkdir -m 700 "$dbdir"
+        cd "$dbdir"
     fi
     # force read
     unset masterpw
