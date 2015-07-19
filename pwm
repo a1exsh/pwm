@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 fatal() {
     echo "$*" >&2
     exit 1
@@ -10,7 +10,7 @@ if [ -f "$PWMRC" ]; then
     . "$PWMRC"
 fi
 [ -n "$cipher" ] || cipher=-aes256
-[ -n "$dbfile" ] || dbfile=~/.pwmdb
+[ -n "$dbdir" ] || dbdir=~/.pwmdb
 [ -n "$default_pwlen" ] || default_pwlen=30
 [ -n "$EDITOR" ] || EDITOR=vi
 
@@ -24,8 +24,9 @@ if [ "$SHELL" = "$BASH" ]; then
     history -r "$history_file"
 fi
 
-if [ -f "$dbfile" ]; then
-    [ $(stat -c'%a' "$dbfile") = 600 ] || fatal "Access mode on password database \`$dbfile' is too permissive: please set to 600."
+if [ -d "$dbdir" ]; then
+    [ $(stat -c'%a' "$dbdir") = 700 ] || fatal "Access mode on password database \`$dbdir' is too permissive: please set to 700."
+    cd "$dbdir"
 fi
 
 type openssl 2>/dev/null >&2 || fatal "OpenSSL suite is required to use Password Manager."
@@ -35,19 +36,37 @@ at_exit="echo 'Operation failed!' >&2"
 trap "$at_exit" EXIT
 
 backup_db() {
-    if [ -f "$dbfile" ]; then
-        cp "$dbfile" "${dbfile}~"
+    if [ -d "$dbdir" ]; then
+        if [ -d "${dbdir}~" ] ; then
+            rm -rf "${dbdir}~"
+        fi
+        mkdir -m 700 "${dbdir}~"
+        cp --preserve ${dbdir}/* ${dbdir}~/
+    fi
+}
+
+restore_db() {
+    if [ -d "${dbdir}~" ] ; then
+        cp -v --preserve ${dbdir}~/* ${dbdir}/
+    else
+        echo "Backup directory ${dbdir}~ not found. Bailing out."
+        exit 1
+    fi
+}
+
+backup_key() {
+    if [ -f "${dbdir}/${key}" ]; then
+        cp --preserve "${dbdir}/${key}" "${dbdir}/${key}~"
     fi
 }
 
 encrypt() {
-    backup_db
-    ( echo "$masterpw"; cat ) | openssl enc "$cipher" -salt -pass stdin >"$dbfile"
+    openssl enc "$cipher" -salt -a -pass env:masterpw >"${dbdir}/${key}" 2> /dev/null
 }
 
 decrypt() {
-    if [ -f "$dbfile" ]; then
-        ( echo "$masterpw"; cat "$dbfile" ) | openssl enc "$cipher" -d -pass stdin
+    if [ -f "${dbdir}/${key}" ]; then
+        < "${dbdir}/${key}" openssl enc "$cipher" -d -a -pass env:masterpw 2> /dev/null
     else
         echo -n ""
     fi
@@ -60,11 +79,16 @@ read_masterpw() {
     [ -n "$prompt" ] || prompt="master password"
     read -p "${prompt}: "  masterpw; echo
     stty echo
+    export masterpw
 }
 
 # only prompts for master password and confirmation actually
 create_db() {
-    echo "About to create new password database: \`$dbfile'..."
+    if [ ! -d "$dbdir" ] ; then
+        echo "About to create new password database: \`$dbdir'..."
+        mkdir -m 700 "$dbdir"
+        cd "$dbdir"
+    fi
     # force read
     unset masterpw
     read_masterpw "choose master password"
@@ -99,31 +123,35 @@ read_key() {
 }
 
 lookup() {
-    ( decrypt | grep "${key}" ) || unset masterpw
-}
-
-store_password() {
-    if [ -z "$tmp" ]; then
-        with_tempfile store_password
+    if decrypted=$(decrypt) ; then
+        echo "$decrypted" | less
+        unset decrypted
     else
-        if decrypt >"$tmp"; then
-            ( <"$tmp" grep -v "^${key}:" || true; echo "${key}:${pw}" ) | encrypt
-            echo "password stored"
-        else
-            unset masterpw
-        fi
+        unset masterpw
+        echo 'decryption failed'
     fi
 }
 
-edit_db() {
-    if [ -z "$tmp" ]; then
-        with_tempfile edit_db
+store_password() {
+    backup_key
+    if { echo -n "$pw" | encrypt ; } then
+        echo "stored"
     else
+        unset masterpw
+        echo "storage failed"
+    fi
+}
+
+edit_key() {
+    if [ -z "$tmp" ]; then
+        with_tempfile edit_key
+    else
+        backup_key
         if decrypt >"$tmp"; then
             "$EDITOR" "$tmp"
             # TODO: check if file was modified actually. mtime?
             encrypt <"$tmp"
-            echo "password database updated"
+            echo "$key updated"
         else
             unset masterpw
         fi
@@ -131,12 +159,23 @@ edit_db() {
 }
 
 change_masterpw() {
+    backup_db
+    for FILE in $(find "$dbdir" -maxdepth 1 -type f) ; do
+        key=$(basename "$FILE")
+        if ! change_keypw ; then
+            echo "An error occurred while changing password on key ${key}. Restoring original files..."
+            restore_db
+            break
+        fi
+    done
+}
+
+change_keypw() {
     if [ -z "$tmp" ]; then
-        with_tempfile change_masterpw
+        with_tempfile change_keypw
     else
         if masterpw="$old_masterpw" decrypt >"$tmp"; then
             masterpw="$new_masterpw" encrypt <"$tmp"
-            echo "master password updated"
         fi
     fi
 }
@@ -150,7 +189,7 @@ soak_xclip() {
 }
 
 echo "Password Manager v0.1"
-[ -f "$dbfile" ] && echo "Database file is: $dbfile"
+[ -d "$dbdir" ] && echo "Database file is: $dbdir"
 [ -f "$history_file" ] && echo "Key history file is: $history_file"
 echo
 print_help() {
@@ -162,7 +201,7 @@ print_help() {
     else
         echo "g[s]) Generate password (also store in the database)"
     fi
-    echo "e) Edit password database"
+    echo "e) Edit entry"
     echo "m) Change master password"
     echo "k) Lock database"
     echo "h) Print this help message"
@@ -173,38 +212,43 @@ while true; do
     read -p "> " action
     case "$action" in
         l)
-            if [ ! -f "$dbfile" ]; then
-                echo "Password database doesn't exist yet: \`$dbfile'"
+            if [ ! -d "$dbdir" ]; then
+                echo "Password database doesn't exist yet: \`$dbdir'"
                 continue
             fi
             read_key "lookup key"
-            read_masterpw
-            key="${key}[^:]*:" lookup || echo "not found"
+            if [ ! -f ${dbdir}/${key} ] ; then
+                echo "key $key does not exist."
+            else
+                read_masterpw
+                lookup || echo "lookup failed"
+            fi
             ;;
         x)
-            if [ ! -f "$dbfile" ]; then
-                echo "Password database doesn't exist yet: \`$dbfile'"
+            if [ ! -d "$dbdir" ]; then
+                echo "Password database doesn't exist yet: \`$dbdir'"
                 continue
             fi
             read_key "key to copy"
             read_masterpw
-            pw=$(key="^${key}:" lookup || true)
+            pw=$(lookup || true)
             if [ -z "$pw" ]; then
                 echo "not found"
                 unset masterpw
             else
-                echo "$pw" | cut -d: -f2 | tr -d '\n' | soak_xclip
+                echo "$pw" | soak_xclip
                 echo "soaked password for paste from X clipboard"
             fi
             ;;
         s)
-            [ -f "$dbfile" ] || create_db || continue
+            [ -d "$dbdir" ] || create_db || continue
             read_key "key to store"
             stty -echo
             read -p "password to store: " pw; echo
             stty echo
             read_masterpw
             store_password
+            unset pw
             ;;
         g|gs|gx|gsx)
             read -p "password length ($default_pwlen): " pwlen
@@ -214,7 +258,7 @@ while true; do
                 echo "$pw"
             else
                 if [ "$action" = gs -o "$action" = gsx ]; then
-                    [ -f "$dbfile" ] || create_db || continue
+                    [ -d "$dbdir" ] || create_db || continue
                     read_key "key to store"
                     read_masterpw
                     store_password
@@ -225,16 +269,17 @@ while true; do
             fi
             ;;
         e)
-            if [ -f "$dbfile" ]; then
+            if [ -d "$dbdir" ]; then
+                read_key "key to edit"
                 read_masterpw
             else
                 create_db || continue
             fi
-            edit_db
+            edit_key
             ;;
         m)
-            if [ ! -f "$dbfile" ]; then
-                echo "Password database doesn't exist yet: \`$dbfile'"
+            if [ ! -d "$dbdir" ]; then
+                echo "Password database doesn't exist yet: \`$dbdir'"
                 continue
             fi
 
